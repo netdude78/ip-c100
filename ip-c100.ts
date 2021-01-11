@@ -3,8 +3,8 @@
 import { VMatrix } from "vapi";
 import { FPGASelection } from "vapi/System";
 import { pause_ms } from "vscript";
-import { WriteOptions } from "vscript/src/vmodel";
 
+// equivalent to dispatch_change_request in vscript.  Don't check the write() method
 export const noverify = {
     retry_until:{
         criterion: 'custom',
@@ -12,33 +12,29 @@ export const noverify = {
     }
 };
 
+// sets the fpga to mode
 async function set_mode(conn: VMatrix, mode: FPGASelection) {
     console.log(`Setting mode for card to ${mode}`);
     conn.system.select_fpga.command.write(mode);
     await pause_ms(1000);
 }
 
+// reboot c100
 async function reboot(conn: VMatrix) {
     console.log(`Rebooting host`);
     conn.system.reboot.write("reboot", <any> noverify);
 }
 
+// reset c100 - use with caution
 async function reset(conn: VMatrix) {
     console.log(`Resetting host`);
     conn.system.reset.write("reset", <any> noverify);
 }
 
+// sets a SINGLE IP address on the port specified.
+// Gateway is optional but will be set as a default gateway if specified.
 async function set_ip(conn: VMatrix, port: number, address: string, prefix: number, gateway?: string) {
     const ports = conn.network_interfaces.ports;
-
-    // for (const ip of await ports.row(port).desired_configuration.base.ip_addresses.rows()) {
-    //     console.log(`Existing IP Address: ${await ip.ip_address.read()}/${await ip.prefix.read()} on port${port}`);
-    //     await ip.delete_ip_address;
-        
-
-    // }
-
-    //await ports.row(port).desired_configuration.base.add_ip_address;
 
     await pause_ms(500);
 
@@ -50,42 +46,38 @@ async function set_ip(conn: VMatrix, port: number, address: string, prefix: numb
     ports.row(port).save_config;
 }
 
-// async function get_gateway_list() {
-//     return {
-//         hostname:   'testgateway',
-//         vm:         'MULTIVIEWER_40GbE',
-//         interfaces: [
-//             {
-//                 ip:         '192.168.1.1/24',
-//                 gateway:    '192.168.1.254'
-//             },
-//         ]
-//     };
-// }
+// this is used in place of a CSV for testing purposes.
+// ultimately this will go away.
+async function get_gateway_list() {
+    return [
+        {
+            hostname:       'testgateway',
+            vm:             'AVP_40GbE',
+            interfaces: [
+                {
+                    port:       2,
+                    ip:         '192.168.1.1',
+                    prefix:     24,
+                    gateway:    '192.168.1.254',
+                },
+            ]
+        },
+    ];
+}
 
+
+// main method.
 async function main() {
-
-    // equivalent to dispatch_change_request
-    const noverify = {
-        retry_until:{
-            criterion: 'custom',
-            validator: () => Promise.resolve(true)
-        }
-    };
-
-    const vmatrix = await VMatrix.open({
+    var vmatrix = await VMatrix.open({
       ip: "10.1.68.96",
       towel: "Reserved - Configuring VM and IP"
     });
-    //await vmatrix.system.usrinfo.cur_status.write("Hello world");
-    // options: AVP_40GbE, MULTIVIEWER_40GbE
-    const currentvm = await vmatrix.system.selected_fpga.read();
+
+    // get the current fpga VM and print it to stdout
+    var currentvm = await vmatrix.system.selected_fpga.read();
     console.log(`Current VM: ${currentvm}`);
-    //await vmatrix.system.select_fpga.command.update("AVP_40GbE");
-
-    await pause_ms(500);
-
-    //await vmatrix.system.reboot();
+    
+    await set_mode(vmatrix, "AVP_40GbE");
 
     const theports = vmatrix.network_interfaces.ports;
 
