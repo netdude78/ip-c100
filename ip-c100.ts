@@ -13,23 +13,34 @@ export const noverify = {
     }
 };
 
+// sets the short hostname
+async function set_hostname(conn: VMatrix, hostname: string, longHostname?: string) {
+    console.log(`Setting hostname to ${hostname}`);
+    await conn.system.usrinfo.short_desc.write(hostname);
+    if (longHostname) {
+        await conn.system.usrinfo.long_desc.write(longHostname);
+    } else {
+        await conn.system.usrinfo.long_desc.write(hostname);
+    }
+}
+
 // sets the fpga to mode
 async function set_mode(conn: VMatrix, mode: FPGASelection) {
     console.log(`Setting mode for card to ${mode}`);
-    conn.system.select_fpga.command.write(mode);
+    await conn.system.select_fpga.command.write(mode);
     await pause_ms(1000);
 }
 
 // reboot c100
-async function reboot(conn: VMatrix) {
+async function reboot_device(conn: VMatrix) {
     console.log(`Rebooting host`);
-    conn.system.reboot.write("reboot", <any> noverify);
+    await conn.system.reboot.write("reboot", <any> noverify);
 }
 
 // reset c100 - use with caution
-async function reset(conn: VMatrix) {
+async function reset_device(conn: VMatrix) {
     console.log(`Resetting host`);
-    conn.system.reset.write("reset", <any> noverify);
+    await conn.system.reset.write("reset", <any> noverify);
 }
 
 // sets a SINGLE IP address on the port specified.
@@ -53,16 +64,16 @@ async function set_ip(conn: VMatrix, port: number, address: string, prefix: numb
     numIP = await (await ports.row(port).desired_configuration.base.ip_addresses.rows()).length;
     console.log(`Number of IP addresses on interface after config: ${numIP}`);
 
-    if (gateway) {
-        // delete all routes on this interface only if a gateway is specified.
-        console.log(`Number of routes on port before route configuration: ${await (await ports.row(port).desired_configuration.base.routes.rows()).length}`);
-        for (const route of await ports.row(port).desired_configuration.base.routes.rows()) {
-            route.delete_route.write("Click", <any> noverify);
-        }
+    // delete all routes on this interface first.
+    console.log(`Number of routes on port before route configuration: ${await (await ports.row(port).desired_configuration.base.routes.rows()).length}`);
+    for (const route of await ports.row(port).desired_configuration.base.routes.rows()) {
+        await route.delete_route.write("Click", <any> noverify);
+    }
 
-        // now add a route and set it.
-        ports.row(port).desired_configuration.base.add_route;
-        ports.row(port).desired_configuration.base.routes.row(0).dst.write(gateway);
+    if (gateway) {
+        // add a route and set it.
+        await ports.row(port).desired_configuration.base.add_route.write("Click", <any>noverify);
+        await ports.row(port).desired_configuration.base.routes.row(0).via.write(gateway);
     }   
 
     // wait 500ms then save network config.
@@ -72,17 +83,17 @@ async function set_ip(conn: VMatrix, port: number, address: string, prefix: numb
 
 // this is used in place of a CSV for testing purposes.
 // ultimately this will go away.
-async function get_gateway_list() {
+function get_gateway_list(): any[] {
     return [
         {
             hostname:       'testgateway',
-            vm:             'AVP_40GbE',
+            vm:             'DMV_40GbE',    // DMV_40GbE / AVP_40GbE
             interfaces: [
                 {
                     port:       2,
-                    ip:         '192.168.1.1',
-                    prefix:     24,
-                    gateway:    '192.168.1.254',
+                    ip:         '172.16.1.4',
+                    prefix:     16,
+                    //gateway:    '192.168.1.254',
                 },
             ]
         },
@@ -97,27 +108,48 @@ async function main() {
     // Wait for user's response.
     //var intNum = readlineSync.question('What Interface? ');
 
-    // connect to c100.  This would normally be 172.16.1.4 (default front IP).
-    var vmatrix = await VMatrix.open({
-      ip: "10.1.68.96",
-      towel: "Reserved - Configuring VM and IP"
-    });
+    // get list of c100s.  This would eventually come from CSV
+    const c100_list = get_gateway_list();
+    var vmatrix: VMatrix;
 
-    // get the current fpga VM and print it to stdout
-    var currentvm = await vmatrix.system.selected_fpga.read();
-    console.log(`Current VM: ${currentvm}`);
+    for (const device of c100_list) {
+        console.log(`Device hostname: ${device.hostname}`);
+        console.log(`Device vm: ${device.vm}`);
+        for (const port of device.interfaces) {
+            console.log(`Port Number: ${port.port}`);
+            console.log(`IP: ${port.ip}`);
+            console.log(`Prefix: ${port.prefix}`);
+            console.log(`Gateway: ${port.gateway}`);
+        }
 
-    // set port 2 to default IP for testing.
-    await set_ip(vmatrix, 2, '172.16.1.4', 16, '172.16.1.1');
-    
-    // set vm to AVP_40GbE for testing.
-    await set_mode(vmatrix, "AVP_40GbE");
+        // connect to c100.  This would normally be 172.16.1.4 (default front IP).
+        vmatrix = await VMatrix.open({
+            ip: "10.1.68.96",
+            towel: "Reserved - Configuring VM and IP"
+        });
 
-    // reboot device.
-    await reboot(vmatrix);
+        // get the current fpga VM and print it to stdout
+        var currentvm = await vmatrix.system.selected_fpga.read();
+        console.log(`Current VM: ${currentvm}`);
 
-    // disconnect
-    await vmatrix.close();
+        // set vm to AVP_40GbE for testing.
+        await set_mode(vmatrix, device.vm);
+
+        // set hostname
+        await set_hostname(vmatrix, device.hostname);
+        
+        // set port 2 to default IP for testing.
+        await set_ip(vmatrix, device.interfaces[0].port, device.interfaces[0].ip, device.interfaces[0].prefix, device.interfaces[0].gateway);
+        
+        await pause_ms(2000);
+        // reboot device.
+        await pause_ms(5000);
+        await reset_device(vmatrix);
+
+        // disconnect
+        await vmatrix.close();
+    }
+
 }
 
 main();
