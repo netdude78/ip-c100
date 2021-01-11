@@ -3,6 +3,7 @@
 import { VMatrix } from "vapi";
 import { FPGASelection } from "vapi/System";
 import { pause_ms } from "vscript";
+export const readlineSync = require('readline-sync');
 
 // equivalent to dispatch_change_request in vscript.  Don't check the write() method
 export const noverify = {
@@ -36,14 +37,37 @@ async function reset(conn: VMatrix) {
 async function set_ip(conn: VMatrix, port: number, address: string, prefix: number, gateway?: string) {
     const ports = conn.network_interfaces.ports;
 
+    // first delete all IP addresses on the port.
+    var numIP = await (await ports.row(port).desired_configuration.base.ip_addresses.rows()).length;
+    console.log(`Number of IP addresses already on interface: ${numIP}`);
+    for (const thisIP of await ports.row(port).desired_configuration.base.ip_addresses.rows()) {
+        await thisIP.delete_ip_address.write("Click", <any> noverify); 
+    }
+
+    // now add a single IP and set it
+    await ports.row(port).desired_configuration.base.add_ip_address.write("Click", <any> noverify);
     await pause_ms(500);
+    await ports.row(port).desired_configuration.base.ip_addresses.row(0).ip_address.write(address);
+    await ports.row(port).desired_configuration.base.ip_addresses.row(0).prefix.write(prefix);
+
+    numIP = await (await ports.row(port).desired_configuration.base.ip_addresses.rows()).length;
+    console.log(`Number of IP addresses on interface after config: ${numIP}`);
 
     if (gateway) {
-        ports.row(port).desired_configuration.base.add_route;
-    }
-    await pause_ms(500);
+        // delete all routes on this interface only if a gateway is specified.
+        console.log(`Number of routes on port before route configuration: ${await (await ports.row(port).desired_configuration.base.routes.rows()).length}`);
+        for (const route of await ports.row(port).desired_configuration.base.routes.rows()) {
+            route.delete_route.write("Click", <any> noverify);
+        }
 
-    ports.row(port).save_config;
+        // now add a route and set it.
+        ports.row(port).desired_configuration.base.add_route;
+        ports.row(port).desired_configuration.base.routes.row(0).dst.write(gateway);
+    }   
+
+    // wait 500ms then save network config.
+    await pause_ms(500);
+    await conn.network_interfaces.save_config.write("Click", <any> noverify);
 }
 
 // this is used in place of a CSV for testing purposes.
@@ -68,6 +92,12 @@ async function get_gateway_list() {
 
 // main method.
 async function main() {
+    // this is an example of using readline sync not async to get user input.
+    // not needed at this time.
+    // Wait for user's response.
+    //var intNum = readlineSync.question('What Interface? ');
+
+    // connect to c100.  This would normally be 172.16.1.4 (default front IP).
     var vmatrix = await VMatrix.open({
       ip: "10.1.68.96",
       towel: "Reserved - Configuring VM and IP"
@@ -76,77 +106,19 @@ async function main() {
     // get the current fpga VM and print it to stdout
     var currentvm = await vmatrix.system.selected_fpga.read();
     console.log(`Current VM: ${currentvm}`);
+
+    // set port 2 to default IP for testing.
+    await set_ip(vmatrix, 2, '172.16.1.4', 16, '172.16.1.1');
     
+    // set vm to AVP_40GbE for testing.
     await set_mode(vmatrix, "AVP_40GbE");
 
-    const theports = vmatrix.network_interfaces.ports;
+    // reboot device.
+    await reboot(vmatrix);
 
-    // for (const ip of await ports.row(port).desired_configuration.base.ip_addresses.rows()) {
-    //     console.log(`Existing IP Address: ${await ip.ip_address.read()}/${await ip.prefix.read()} on port${port}`);
-    //     await ip.delete_ip_address;
-        
-
-    // }
-    var numIP = await (await vmatrix.network_interfaces.ports.row(2).desired_configuration.base.ip_addresses.rows()).length;
-    console.log(`Number of IP addresses already on interface: ${numIP}`);
-    if (numIP > 0) {
-        
-        for (const thisport of await vmatrix.network_interfaces.ports.row(2).desired_configuration.base.ip_addresses.rows()) {
-            await thisport.delete_ip_address.write("Click", <any> noverify); 
-            await pause_ms(500);
-        }
-        await pause_ms(500);
-        theports.row(2).save_config.write("Click", <any> noverify);
-        await pause_ms(500);
-        await vmatrix.network_interfaces.save_config.write("Click", <any> noverify);
-    }
-    await vmatrix.network_interfaces.ports.row(2).desired_configuration.base.add_ip_address.write("Click", <any> noverify);
-    await pause_ms(500);
-    await theports.row(2).desired_configuration.base.ip_addresses.row(0).ip_address.write("172.16.1.4");
-    await theports.row(2).desired_configuration.base.ip_addresses.row(0).prefix.write(16);
-    theports.row(2).save_config.write("Click", <any> noverify);
-
-    numIP = await (await vmatrix.network_interfaces.ports.row(2).desired_configuration.base.ip_addresses.rows()).length;
-    console.log(`Number of IP addresses on interface after config: ${numIP}`);
-
-    console.log("Rebooting.");
-    await vmatrix.system.reboot.write("reboot", <any> noverify);
-    // console.log("System Back UP.");
-    // numIP = await (await vmatrix.network_interfaces.ports.row(2).desired_configuration.base.ip_addresses.rows()).length;
-    // console.log (`after reboot there are ${numIP} interfaces`);
-    // var currentIP = await vmatrix.network_interfaces.ports.row(2).desired_configuration.base.ip_addresses.row(0).ip_address.read();
-    // console.log(`IP of int2: ${currentIP}.`)
-
-
+    // disconnect
     await vmatrix.close();
-    return;
-    const ports = vmatrix.network_interfaces.ports;
-    // first delete all IP addresses
-    var intcount = 0;
-    for (const port of await ports.rows()) {
-        for (const ip of await port.desired_configuration.base.ip_addresses.rows()) {
-            console.log(`Existing IP Address: ${await ip.ip_address.read()}/${await ip.prefix.read()} on port${intcount}`);
-            //ip.delete_ip_address();
-        }
-        for (const route of await port.desired_configuration.base.routes.rows()) {
-            console.log(`Route: ${await route.dst.read()}/${await route.dst_prefix.read()} gw ${await route.via.read()} on port${intcount}`);
-        }
-        intcount++;
-    }
-    // ports.row(0).desired_configuration.base.add_ip_address("1.1.1.1/24");
-    // ports.row(0).desired_configuration.base.add_route("1.1.1.254");
-
-
-    console.log("Attempting to add address to port2");
-    set_ip(vmatrix, 2, "1.1.1.1", 24);
-    console.log("Disconnecting.");
-    await vmatrix.close();
-  }
-
-var readlineSync = require('readline-sync');
- 
-// Wait for user's response.
-//var intNum = readlineSync.question('What Interface? ');
+}
 
 main();
   
