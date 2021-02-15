@@ -5,6 +5,9 @@ import { FPGASelection } from "vapi/System";
 import { pause_ms } from "vscript";
 export const readlineSync = require('readline-sync');
 
+// global debugging
+export const debug = true;
+
 // equivalent to dispatch_change_request in vscript.  Don't check the write() method
 export const noverify = {
     retry_until:{
@@ -86,14 +89,50 @@ async function set_ip(conn: VMatrix, port: number, address: string, prefix: numb
 function get_gateway_list(): any[] {
     return [
         {
-            hostname:       'testgateway',
-            vm:             'DMV_40GbE',    // DMV_40GbE / AVP_40GbE
+            hostname:       'Card1',
+            vm:             'AVP_40GbE',    // DMV_40GbE / AVP_40GbE
             interfaces: [
                 {
-                    port:       2,
-                    ip:         '172.16.1.4',
-                    prefix:     16,
-                    //gateway:    '192.168.1.254',
+                    port:       0,
+                    ip:         '10.1.100.101',
+                    prefix:     24,
+                    gateway:    '10.1.100.1',
+                },
+                {
+                    port:       1,
+                    ip:         '10.1.200.101',
+                    prefix:     24,
+                    gateway:    '10.1.200.1',
+                },
+                {
+                    port:       3,
+                    ip:         '10.1.10.101',
+                    prefix:     24,
+                    gateway:    '10.1.10.1',
+                },
+            ]
+        },
+        {
+            hostname:       'Card2',
+            vm:             'AVP_40GbE',    // DMV_40GbE / AVP_40GbE
+            interfaces: [
+                {
+                    port:       0,
+                    ip:         '10.1.100.101',
+                    prefix:     24,
+                    gateway:    '10.1.100.1',
+                },
+                {
+                    port:       1,
+                    ip:         '10.1.200.101',
+                    prefix:     24,
+                    gateway:    '10.1.200.1',
+                },
+                {
+                    port:       3,
+                    ip:         '10.1.10.101',
+                    prefix:     24,
+                    gateway:    '10.1.10.1',
                 },
             ]
         },
@@ -103,11 +142,6 @@ function get_gateway_list(): any[] {
 
 // main method.
 async function main() {
-    // this is an example of using readline sync not async to get user input.
-    // not needed at this time.
-    // Wait for user's response.
-    //var intNum = readlineSync.question('What Interface? ');
-
     // get list of c100s.  This would eventually come from CSV
     const c100_list = get_gateway_list();
     var vmatrix: VMatrix;
@@ -122,28 +156,66 @@ async function main() {
             console.log(`Gateway: ${port.gateway}`);
         }
 
+        const response = readlineSync.question('Press Enter When Connected to Device Front Port, Ctrl-C to cancel.');
+
         // connect to c100.  This would normally be 172.16.1.4 (default front IP).
         vmatrix = await VMatrix.open({
-            ip: "10.1.68.96",
+            ip: "172.16.1.4",
             towel: "Reserved - Configuring VM and IP"
         });
 
         // get the current fpga VM and print it to stdout
         var currentvm = await vmatrix.system.selected_fpga.read();
-        console.log(`Current VM: ${currentvm}`);
+        if (debug)
+            console.log(`Current VM: ${currentvm}`);
 
-        // set vm to AVP_40GbE for testing.
+        // set vm to desired vm.
+        if (debug)
+            console.log("Setting Device VM.");
         await set_mode(vmatrix, device.vm);
 
-        // set hostname
-        await set_hostname(vmatrix, device.hostname);
+        // set hostname (optional)
+        if (device.hostname) {
+            if (debug)
+                console.log("Setting Hostname.");
+            await set_hostname(vmatrix, device.hostname);
+        }
+
+        // Set all ports according to provided configuration data.
+        for (var thisPort of device.interfaces) {
+            // if current VM is *NOT* 40GbE but desired is, interface numbers change.
+            // port 0 is port 0
+            // port 1 is port 4
+            // port 2 is port 8
+            // port 3 is port 9
+            if ((device.vm.match(/40GbE$/i) != null) &&
+                (currentvm.match(/40GbE$/i) == null)) {
+                
+                switch(thisPort.port) {
+                    case 1:
+                        thisPort.port = 4;
+                        if (debug) 
+                            console.log(`Current VM 10g, desired 40g.  Changing port 1 to port 4.`);
+                        break;
+                    case 2:
+                        thisPort.port = 8;
+                        if (debug) 
+                            console.log(`Current VM 10g, desired 40g.  Changing port 2 to port 8.`);
+                        break;
+                    case 3:
+                        thisPort.port = 9;
+                        if (debug) 
+                            console.log(`Current VM 10g, desired 40g.  Changing port 3 to port 9.`);
+                        break;
+                }
+            }
+
+            await set_ip(vmatrix, thisPort.port, thisPort.ip, thisPort.prefix, thisPort.gateway);
+        }
         
-        // set port 2 to default IP for testing.
-        await set_ip(vmatrix, device.interfaces[0].port, device.interfaces[0].ip, device.interfaces[0].prefix, device.interfaces[0].gateway);
-        
+        // wait for IP setting apply to finish.
         await pause_ms(2000);
-        // reboot device.
-        await pause_ms(5000);
+        // reset device.
         await reset_device(vmatrix);
 
         // disconnect
