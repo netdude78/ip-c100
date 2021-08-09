@@ -20,10 +20,14 @@ ethernet cable to the next device.
 ## TODO
 * Add warning message indicating card will be reset and wiped
 
+## Credits
+
 This code is based on the Lawo VMatrix vapi and vscript.  Visit the Docker site to pull the repository here:
 https://hub.docker.com/r/arkonatechnologies/vscript
+
 
 Open Source projects inclued in this project:
 
 https://www.npmjs.com/package/readline-sync (MIT License)
+
 https://www.npmjs.com/package/papaparse (MIT License)
